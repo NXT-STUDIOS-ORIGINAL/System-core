@@ -16,34 +16,26 @@ jobs:
 
     steps:
 
-      # 1. Download repository
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # 2. Install Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: 22
 
-      # 3. Install Java
       - name: Setup JDK 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
-      # 4. Install npm dependencies
-      # npm install is used because the repository currently
-      # does not contain package-lock.json.
       - name: Install dependencies
         run: npm install
 
-      # 5. Build React/Vite application
       - name: Build web application
         run: npm run build
 
-      # 6. Verify web build
       - name: Verify web build
         run: |
           if [ ! -d "dist" ]; then
@@ -52,39 +44,44 @@ jobs:
           fi
 
           echo "Web build successful."
-          ls -la dist
 
-      # 7. Make sure Capacitor exists
       - name: Install Capacitor
         run: |
           npm install @capacitor/core @capacitor/cli @capacitor/android
 
-      # 8. Create Android project if necessary
+      - name: Create Capacitor configuration
+        run: |
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.systemcore.app",
+            "appName": "SYSTEM CORE",
+            "webDir": "dist"
+          }
+          EOF
+
+          echo "Capacitor configuration created:"
+          cat capacitor.config.json
+
       - name: Prepare Android project
         run: |
           if [ -d "android" ]; then
             echo "Existing Android project detected."
           else
-            echo "No Android project detected."
             echo "Creating Android project..."
             npx cap add android
           fi
 
-      # 9. Synchronize web app with Android
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # 10. Make Gradle executable
       - name: Prepare Gradle
         working-directory: android
         run: chmod +x gradlew
 
-      # 11. Build APK
       - name: Build Debug APK
         working-directory: android
         run: ./gradlew assembleDebug --stacktrace
 
-      # 12. Verify APK
       - name: Verify APK
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
@@ -94,13 +91,9 @@ jobs:
             exit 1
           fi
 
-          echo "======================================"
-          echo "SYSTEM CORE APK BUILD SUCCESSFUL"
-          echo "======================================"
-
+          echo "SYSTEM CORE APK successfully generated!"
           ls -lh "$APK"
 
-      # 13. Upload APK
       - name: Upload SYSTEM CORE APK
         uses: actions/upload-artifact@v4
         with:
