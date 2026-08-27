@@ -47,6 +47,8 @@ import {
   getQuestTimingType,
   formatDynamicTimer,
   parseQuestPenalty,
+  getStatIcon,
+  getStatFullName,
 } from '../services/questManager';
 import {
   isLootBox,
@@ -502,7 +504,7 @@ export const PlayerScreen: React.FC = () => {
       {isEditing && (
         <div className="hud-panel p-5 border border-[#00f2ff]/40 font-mono text-xs space-y-4 animate-in fade-in duration-150">
           <div className="flex items-center justify-between border-b border-[#1a2b3c] pb-2">
-            <span className="font-bold text-[#00f2ff] uppercase tracking-wider">Edit Player State Attributes</span>
+            <span className="font-bold text-[#00f2ff] uppercase tracking-wider">Edit Player State Stats</span>
             <span className="text-[10px] text-slate-500 uppercase">Saving will increment state version</span>
           </div>
 
@@ -789,15 +791,15 @@ export const PlayerScreen: React.FC = () => {
 
       {/* Detailed System Collections */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* ATTRIBUTES */}
+        {/* STATS */}
         <div className="hud-panel p-5 border border-[#1a2b3c]">
           <div className="flex items-center gap-2 border-b border-[#1a2b3c] pb-3 mb-3">
             <Zap className="w-4 h-4 text-[#00f2ff]" />
             <h3 className="text-[10px] font-bold font-mono text-slate-300 uppercase tracking-[0.2em]">
-              ATTRIBUTES
+              STATS
             </h3>
           </div>
-          {renderSectionContent(player.attributes, 'Attributes')}
+          {renderSectionContent(player.stats || player.attributes, 'Stats')}
         </div>
 
         {/* SKILLS */}
@@ -1158,24 +1160,43 @@ export const PlayerScreen: React.FC = () => {
                                       +{rewardsObj.xp} XP
                                     </span>
                                   )}
-                                  {rewardsObj.coins !== undefined && (
+                                  {rewardsObj.currencyEffects && rewardsObj.currencyEffects.length > 0 ? (
+                                    rewardsObj.currencyEffects.map((cEff, cIdx) => (
+                                      <span key={cIdx} className="px-1.5 py-0.2 rounded bg-amber-950/60 border border-amber-600/40 text-amber-300 font-bold">
+                                        🪙 {cEff.currencyName || 'Coins'} +{cEff.amount}
+                                      </span>
+                                    ))
+                                  ) : rewardsObj.coins !== undefined ? (
                                     <span className="px-1.5 py-0.2 rounded bg-amber-950/60 border border-amber-600/40 text-amber-300 font-bold">
-                                      +{rewardsObj.coins} Gold
+                                      🪙 +{rewardsObj.coins} Coins
                                     </span>
-                                  )}
+                                  ) : null}
+                                  {rewardsObj.statEffects && rewardsObj.statEffects.length > 0 ? (
+                                    rewardsObj.statEffects.map((eff, eIdx) => (
+                                      <span
+                                        key={eIdx}
+                                        className={`px-1.5 py-0.2 rounded border font-bold ${
+                                          eff.operation === 'decrease'
+                                            ? 'bg-rose-950/60 border-rose-600/40 text-rose-300'
+                                            : 'bg-emerald-950/60 border-emerald-600/40 text-emerald-300'
+                                        }`}
+                                      >
+                                        {getStatIcon(eff.stat)} {eff.statName || getStatFullName(eff.stat)} {eff.operation === 'decrease' ? `-${eff.amount}` : `+${eff.amount}`}
+                                      </span>
+                                    ))
+                                  ) : rewardsObj.stats && Object.keys(rewardsObj.stats).length > 0 ? (
+                                    <span className="px-1.5 py-0.2 rounded bg-emerald-950/60 border border-emerald-600/40 text-emerald-300 font-bold">
+                                      {Object.entries(rewardsObj.stats).map(([k, v]) => `${v >= 0 ? `+${v}` : v} ${k}`).join(', ')}
+                                    </span>
+                                  ) : null}
                                   {rewardsObj.title && (
                                     <span className="px-1.5 py-0.2 rounded bg-purple-950/60 border border-purple-600/40 text-purple-300">
-                                      Title: {rewardsObj.title}
+                                      👑 {rewardsObj.title}
                                     </span>
                                   )}
                                   {rewardsObj.items && rewardsObj.items.length > 0 && (
                                     <span className="px-1.5 py-0.2 rounded bg-slate-800 border border-slate-700 text-slate-300">
-                                      Items: {rewardsObj.items.map(it => `${it.name} x${it.quantity}`).join(', ')}
-                                    </span>
-                                  )}
-                                  {rewardsObj.stats && Object.keys(rewardsObj.stats).length > 0 && (
-                                    <span className="px-1.5 py-0.2 rounded bg-emerald-950/60 border border-emerald-600/40 text-emerald-300 font-bold">
-                                      {Object.entries(rewardsObj.stats).map(([k, v]) => `+${v} ${k}`).join(', ')}
+                                      🎒 {rewardsObj.items.map(it => `${it.name} x${it.quantity}`).join(', ')}
                                     </span>
                                   )}
                                 </div>

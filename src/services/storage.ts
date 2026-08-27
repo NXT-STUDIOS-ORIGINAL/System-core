@@ -30,6 +30,10 @@ export const DEFAULT_PLAYER_STATE: PlayerState = {
   level: '1',
   xp: '0',
   status: 'ONLINE',
+  currency: {
+    coins: 0,
+  },
+  coins: 0,
   progression: {
     level: 1,
     xp: 0,
@@ -42,7 +46,13 @@ export const DEFAULT_PLAYER_STATE: PlayerState = {
   questRefreshRequested: false,
   questRefreshRequestedAt: undefined,
   archivedQuests: [],
-  attributes: {},
+  attributes: {
+    Strength: 10,
+    Intelligence: 10,
+    Skill: 10,
+    Discipline: 10,
+    Stamina: 10,
+  },
   skills: [],
   quests: [],
   achievements: [],
@@ -100,6 +110,20 @@ export function normalizePlayerState(rawPlayer: any): PlayerState {
     ? rawPlayer.xp
     : (rawPlayer.progression?.xp ?? 0);
 
+  const rawCoins = typeof rawPlayer.currency?.coins === 'number' && !isNaN(rawPlayer.currency.coins)
+    ? Math.max(0, Math.floor(rawPlayer.currency.coins))
+    : (rawPlayer.currency && (rawPlayer.currency as any).Coins !== undefined
+        ? Math.max(0, parseInt(String((rawPlayer.currency as any).Coins), 10) || 0)
+        : (typeof rawPlayer.coins === 'number' && !isNaN(rawPlayer.coins)
+            ? Math.max(0, Math.floor(rawPlayer.coins))
+            : (typeof rawPlayer.systemVariables?.coins === 'number'
+                ? Math.max(0, Math.floor(rawPlayer.systemVariables.coins))
+                : (parseInt(String(rawPlayer.systemVariables?.coins || rawPlayer.systemVariables?.Coins || rawPlayer.worldState?.coins || '0'), 10) || 0))));
+
+  const normalizedSystemVars = rawPlayer.systemVariables && typeof rawPlayer.systemVariables === 'object' && !Array.isArray(rawPlayer.systemVariables)
+    ? { ...rawPlayer.systemVariables, coins: rawCoins }
+    : { coins: rawCoins };
+
   return {
     ...DEFAULT_PLAYER_STATE,
     ...rawPlayer,
@@ -109,14 +133,25 @@ export function normalizePlayerState(rawPlayer: any): PlayerState {
     level: String(rawLevel),
     xp: String(rawXp),
     status: rawPlayer.status || 'ONLINE',
+    currency: {
+      ...(rawPlayer.currency && typeof rawPlayer.currency === 'object' ? rawPlayer.currency : {}),
+      coins: rawCoins,
+    },
+    coins: rawCoins,
     progression: {
       level: typeof rawLevel === 'number' ? rawLevel : (parseInt(String(rawLevel), 10) || 1),
       xp: typeof rawXp === 'number' ? rawXp : (parseInt(String(rawXp), 10) || 0),
       ...(rawPlayer.progression || {}),
     },
     attributes: rawPlayer.attributes && typeof rawPlayer.attributes === 'object' && !Array.isArray(rawPlayer.attributes)
-      ? rawPlayer.attributes
-      : {},
+      ? (Object.keys(rawPlayer.attributes).length > 0
+          ? rawPlayer.attributes
+          : (rawPlayer.stats && typeof rawPlayer.stats === 'object' && Object.keys(rawPlayer.stats).length > 0
+              ? rawPlayer.stats
+              : DEFAULT_PLAYER_STATE.attributes))
+      : (rawPlayer.stats && typeof rawPlayer.stats === 'object' && Object.keys(rawPlayer.stats).length > 0
+          ? rawPlayer.stats
+          : DEFAULT_PLAYER_STATE.attributes),
     skills: Array.isArray(rawPlayer.skills) ? rawPlayer.skills : [],
     quests: Array.isArray(rawPlayer.quests) ? rawPlayer.quests : [],
     archivedQuests: Array.isArray(rawPlayer.archivedQuests) ? rawPlayer.archivedQuests : [],
@@ -139,9 +174,7 @@ export function normalizePlayerState(rawPlayer: any): PlayerState {
     worldState: rawPlayer.worldState && typeof rawPlayer.worldState === 'object' && !Array.isArray(rawPlayer.worldState)
       ? rawPlayer.worldState
       : {},
-    systemVariables: rawPlayer.systemVariables && typeof rawPlayer.systemVariables === 'object' && !Array.isArray(rawPlayer.systemVariables)
-      ? rawPlayer.systemVariables
-      : {},
+    systemVariables: normalizedSystemVars,
     importantMemory: Array.isArray(rawPlayer.importantMemory)
       ? rawPlayer.importantMemory
       : (Array.isArray(rawPlayer.importantEvents) ? rawPlayer.importantEvents : []),

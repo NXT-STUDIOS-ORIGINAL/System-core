@@ -10,6 +10,7 @@ import {
   GeminiStateChange,
 } from '../types';
 import { sanitizeInventory, normalizeItemName, getItemQuantity } from './inventoryManager';
+import { getPlayerCoins, setPlayerCoins, transactPlayerCurrency } from './currencyManager';
 
 /**
  * Parses numeric value from state string or number
@@ -113,6 +114,7 @@ export function normalizePath(rawPath: string): string {
   if (lower === 'rank') return 'progression.rank';
   if (lower === 'status') return 'status';
   if (lower === 'playerid' || lower === 'player_id') return 'playerId';
+  if (lower === 'currency.coins' || lower === 'coins' || lower === 'currency' || lower === 'gold') return 'currency.coins';
 
   if (lower.startsWith('attribute.')) return 'attributes.' + p.substring(10);
   if (lower.startsWith('attributes.')) return 'attributes.' + p.substring(11);
@@ -150,6 +152,8 @@ export function applyStructuredGeminiChanges(
   // Deep clone to ensure pure immutability
   const next: PlayerState = {
     ...currentState,
+    currency: { ...(currentState.currency || { coins: getPlayerCoins(currentState) }) },
+    coins: getPlayerCoins(currentState),
     progression: { ...(currentState.progression || { level: currentState.level || 1, xp: currentState.xp || 0 }) },
     attributes: { ...(currentState.attributes || {}) },
     skills: [...(currentState.skills || [])],

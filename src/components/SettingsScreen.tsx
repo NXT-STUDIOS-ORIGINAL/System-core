@@ -1235,7 +1235,7 @@ export const SettingsScreen: React.FC = () => {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3 text-[11px]">
           <div className="p-3 bg-[#05070a] border border-[#1a2b3c] space-y-1">
-            <span className="text-slate-400 font-bold uppercase block text-[10px]">CURRENT ATTRIBUTES:</span>
+            <span className="text-slate-400 font-bold uppercase block text-[10px]">CURRENT STATS:</span>
             <div className="text-slate-300 font-mono flex flex-wrap gap-x-3 gap-y-1">
               {Object.keys(db.player.attributes || {}).length > 0 ? (
                 Object.entries(db.player.attributes).map(([k, v]) => (
@@ -1244,7 +1244,7 @@ export const SettingsScreen: React.FC = () => {
                   </span>
                 ))
               ) : (
-                <span className="text-slate-600 italic">No attributes recorded</span>
+                <span className="text-slate-600 italic">No stats recorded</span>
               )}
             </div>
           </div>

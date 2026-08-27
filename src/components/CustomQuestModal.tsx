@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { QuestItem, QuestRequirement, QuestRewardItem, QuestRewards, QuestPenalty } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { QuestItem, QuestRequirement, QuestRewardItem, QuestRewards, QuestPenalty, QuestStatEffect, QuestCurrencyEffect } from '../types';
 import {
   X,
   Save,
@@ -21,8 +21,23 @@ import {
   Coins,
   Shield,
   Activity,
+  Check,
 } from 'lucide-react';
-import { generateCustomQuestId, formatQuestRewardSummary } from '../services/questManager';
+import {
+  generateCustomQuestId,
+  formatQuestRewardSummary,
+  formatQuestPenaltySummary,
+  getAuthoritativePlayerStats,
+  validateAuthoritativeStatsConsistency,
+  AuthoritativeStatInfo,
+  getStatIcon,
+  getStatFullName,
+  normalizeStatKey,
+  extractQuestRewardStatEffects,
+  extractQuestRewardCurrencyEffects,
+  extractQuestPenaltyStatEffects,
+  extractQuestPenaltyCurrencyEffects,
+} from '../services/questManager';
 import { useSystemCore } from '../context/SystemCoreContext';
 
 interface CustomQuestModalProps {
@@ -33,6 +48,10 @@ interface CustomQuestModalProps {
   onDelete?: (questId: string) => Promise<void>;
   onDuplicate?: (quest: QuestItem) => Promise<void>;
 }
+
+const CURRENCY_OPTIONS = [
+  { value: 'Coins', label: 'Coins', icon: '🪙' },
+];
 
 const COMMON_ICONS = ['⚔️', '🎯', '🏋️', '🏃‍♂️', '🧘', '📚', '💻', '🧪', '🛡️', '🏆', '⚡', '🔥', '💧', '🥗', '📜', '✨'];
 const QUEST_TYPES = [
@@ -132,6 +151,26 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
   const globalPenaltiesEnabled = db.settings.questIncompletionPenaltiesEnabled !== false;
   const isEditing = Boolean(initialQuest && (initialQuest.questId || initialQuest.id));
 
+  // Authoritative Single Source of Truth for Player Stats
+  const authoritativeStats: AuthoritativeStatInfo[] = useMemo(() => {
+    return getAuthoritativePlayerStats(db.player);
+  }, [db.player]);
+
+  const authoritativeStatNames: string[] = useMemo(() => {
+    return authoritativeStats.map((s) => s.name);
+  }, [authoritativeStats]);
+
+  // Automated Consistency Validation Assertion: availableRewardStats == availablePenaltyStats == authoritativePlayerStats
+  useEffect(() => {
+    const playerExisting = authoritativeStatNames;
+    const rewardAvailable = authoritativeStatNames;
+    const penaltyAvailable = authoritativeStatNames;
+    const validation = validateAuthoritativeStatsConsistency(playerExisting, rewardAvailable, penaltyAvailable);
+    if (!validation.isConsistent) {
+      console.warn('[SYSTEM CORE ASSERTION FAILED] Stat selectors mismatch with authoritative Player Stats:', validation.error);
+    }
+  }, [authoritativeStatNames]);
+
   // Tabs
   type TabKey = 'general' | 'requirements' | 'timing' | 'rewards' | 'penalty';
   const [activeTab, setActiveTab] = useState<TabKey>('general');
@@ -171,12 +210,18 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
   const [rewardCustom, setRewardCustom] = useState<string>('');
   const [rewardItems, setRewardItems] = useState<Array<{ name: string; quantity: number; rank?: string; rarity?: string }>>([]);
   const [statBonuses, setStatBonuses] = useState<Array<{ stat: string; value: number }>>([]);
+  const [rewardStatEffects, setRewardStatEffects] = useState<QuestStatEffect[]>([]);
+  const [rewardCurrencyEffects, setRewardCurrencyEffects] = useState<QuestCurrencyEffect[]>([]);
 
-  // Penalty
+  // Penalty State — Separated Stat and Currency Penalties
   const [penaltyEnabled, setPenaltyEnabled] = useState<boolean>(true);
-  const [penaltyType, setPenaltyType] = useState<string>('XP');
-  const [penaltyValue, setPenaltyValue] = useState<string>('50');
+  const [penaltyStatEffects, setPenaltyStatEffects] = useState<QuestStatEffect[]>([]);
+  const [penaltyCurrencyEffects, setPenaltyCurrencyEffects] = useState<QuestCurrencyEffect[]>([]);
+  const [penaltyType, setPenaltyType] = useState<string>('STAT');
+  const [penaltyValue, setPenaltyValue] = useState<string>('1');
   const [penaltyDescription, setPenaltyDescription] = useState<string>('');
+  const [penaltyStat, setPenaltyStat] = useState<string>('Strength');
+  const [penaltyStatOperation, setPenaltyStatOperation] = useState<'increase' | 'decrease'>('decrease');
 
   // Advanced & Metadata
   const [maxAttempts, setMaxAttempts] = useState<string>('');
@@ -191,6 +236,9 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
 
   // Initialize or reset form
   useEffect(() => {
+    const defaultStatName = authoritativeStats[0]?.name || 'Strength';
+    const defaultStatKey = authoritativeStats[0]?.key || 'STR';
+
     if (initialQuest) {
       setTitle(initialQuest.title || '');
       setDescription(initialQuest.description || '');
@@ -254,15 +302,86 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
         setStatBonuses([]);
       }
 
-      // Penalty
+      // Reward Stat Effects & Currency Effects (Authoritative)
+      const extractedRewardStats = extractQuestRewardStatEffects(rewards, initialQuest);
+      const extractedRewardCurrs = extractQuestRewardCurrencyEffects(rewards, initialQuest);
+
+      if (extractedRewardStats.length > 0) {
+        setRewardStatEffects(
+          extractedRewardStats.map((eff) => {
+            const matched = authoritativeStats.find(
+              (s) => s.name.toLowerCase() === (eff.statName || eff.stat || '').toLowerCase() ||
+                     s.key.toLowerCase() === (eff.stat || '').toLowerCase()
+            );
+            return {
+              ...eff,
+              stat: matched ? matched.name : (eff.stat || defaultStatName),
+              statName: matched ? matched.name : (eff.statName || defaultStatName),
+            };
+          })
+        );
+      } else {
+        setRewardStatEffects([
+          { type: 'stat', statName: defaultStatName, stat: defaultStatName, operation: 'increase', amount: 1 },
+        ]);
+      }
+
+      setRewardCurrencyEffects(
+        extractedRewardCurrs.length > 0
+          ? extractedRewardCurrs
+          : rewards?.coins !== undefined
+          ? [{ type: 'currency', currencyName: 'Coins', currency: 'Coins', operation: 'increase', amount: rewards.coins }]
+          : [{ type: 'currency', currencyName: 'Coins', currency: 'Coins', operation: 'increase', amount: 100 }]
+      );
+
+      // Penalty (Separated Stat Effects and Currency Effects)
       const p = initialQuest.penalty;
       const isPenEnabled = initialQuest.penaltyEnabled ?? (typeof p === 'object' ? p.enabled !== false : !!p);
       setPenaltyEnabled(isPenEnabled);
-      setPenaltyType(initialQuest.penaltyType || (typeof p === 'object' ? p.type : undefined) || 'XP');
+      const parsedPen = typeof p === 'object' ? p : undefined;
+      const extractedPenStats = extractQuestPenaltyStatEffects(parsedPen as any, initialQuest);
+      const extractedPenCurrs = extractQuestPenaltyCurrencyEffects(parsedPen as any, initialQuest);
+
+      if (extractedPenStats.length > 0) {
+        setPenaltyStatEffects(
+          extractedPenStats.map((eff) => {
+            const matched = authoritativeStats.find(
+              (s) => s.name.toLowerCase() === (eff.statName || eff.stat || '').toLowerCase() ||
+                     s.key.toLowerCase() === (eff.stat || '').toLowerCase()
+            );
+            return {
+              ...eff,
+              stat: matched ? matched.name : (eff.stat || defaultStatName),
+              statName: matched ? matched.name : (eff.statName || defaultStatName),
+            };
+          })
+        );
+      } else {
+        setPenaltyStatEffects([
+          { type: 'stat', statName: defaultStatName, stat: defaultStatName, operation: 'decrease', amount: 1 },
+        ]);
+      }
+      setPenaltyCurrencyEffects(extractedPenCurrs);
+
+      let pType = initialQuest.penaltyType || (typeof p === 'object' ? p.type : undefined) || 'STAT';
+      if (extractedPenStats.length > 0 && extractedPenCurrs.length > 0) {
+        pType = 'STAT_AND_CURRENCY';
+      } else if (extractedPenStats.length > 0) {
+        pType = 'STAT';
+      } else if (extractedPenCurrs.length > 0) {
+        pType = 'COIN';
+      }
+      setPenaltyType(pType);
+
+      if (extractedPenStats.length > 0) {
+        setPenaltyStat(extractedPenStats[0].statName || extractedPenStats[0].stat);
+        setPenaltyStatOperation(extractedPenStats[0].operation === 'increase' ? 'increase' : 'decrease');
+      }
+
       setPenaltyValue(
         initialQuest.penaltyValue !== undefined
           ? String(initialQuest.penaltyValue)
-          : (typeof p === 'object' && p.value !== undefined ? String(p.value) : '')
+          : (typeof p === 'object' && p.value !== undefined ? String(p.value) : (extractedPenStats.length > 0 ? String(extractedPenStats[0].amount) : '1'))
       );
       setPenaltyDescription(
         initialQuest.penaltyDescription ||
@@ -303,10 +422,16 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
       setRewardCustom('');
       setRewardItems([]);
       setStatBonuses([]);
+      setRewardStatEffects([{ type: 'stat', statName: defaultStatName, stat: defaultStatName, operation: 'increase', amount: 1 }]);
+      setRewardCurrencyEffects([{ type: 'currency', currencyName: 'Coins', currency: 'Coins', operation: 'increase', amount: 100 }]);
       setPenaltyEnabled(true);
-      setPenaltyType('XP');
-      setPenaltyValue('100');
-      setPenaltyDescription('Lose 100 XP if failed');
+      setPenaltyType('STAT');
+      setPenaltyStat(defaultStatName);
+      setPenaltyStatOperation('decrease');
+      setPenaltyValue('1');
+      setPenaltyDescription(`📊 ${defaultStatName} -1`);
+      setPenaltyStatEffects([{ type: 'stat', statName: defaultStatName, stat: defaultStatName, operation: 'decrease', amount: 1 }]);
+      setPenaltyCurrencyEffects([]);
       setMaxAttempts('');
       setCooldown('');
       setTagsInput('');
@@ -315,7 +440,7 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
     setActiveTab('general');
     setFormError(null);
     setShowDeleteConfirm(false);
-  }, [initialQuest, isOpen]);
+  }, [initialQuest, isOpen, authoritativeStats]);
 
   if (!isOpen) return null;
 
@@ -355,7 +480,8 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
 
   // Stat Bonus handlers
   const handleAddStatBonus = () => {
-    setStatBonuses([...statBonuses, { stat: 'STR', value: 1 }]);
+    const defaultStat = authoritativeStats[0]?.name || 'Strength';
+    setStatBonuses([...statBonuses, { stat: defaultStat, value: 1 }]);
   };
 
   const handleUpdateStatBonus = (index: number, field: 'stat' | 'value', val: any) => {
@@ -368,8 +494,163 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
     setStatBonuses(statBonuses.filter((_, i) => i !== index));
   };
 
+  // Stat Effect handlers for Rewards (STAT REWARD)
+  const handleAddRewardStatEffect = () => {
+    const defaultStat = authoritativeStats[0]?.name || 'Strength';
+    setRewardStatEffects([
+      ...rewardStatEffects,
+      { type: 'stat', statName: defaultStat, stat: defaultStat, operation: 'increase', amount: 1 },
+    ]);
+  };
+
+  const handleUpdateRewardStatEffect = (index: number, field: string, val: any) => {
+    const updated = [...rewardStatEffects];
+    if (field === 'stat') {
+      const match = authoritativeStats.find(
+        (s) => s.name === val || s.key === val || s.name.toLowerCase() === String(val).toLowerCase()
+      );
+      const statName = match ? match.name : val;
+      updated[index] = {
+        ...updated[index],
+        stat: statName,
+        statName: statName,
+      };
+    } else if (field === 'amount') {
+      const rawVal = typeof val === 'number' ? val : parseInt(String(val), 10);
+      const wholeAmount = isNaN(rawVal) ? 1 : Math.max(1, Math.round(rawVal));
+      updated[index] = {
+        ...updated[index],
+        amount: wholeAmount,
+      };
+    } else if (field === 'operation') {
+      updated[index] = {
+        ...updated[index],
+        operation: val,
+      };
+    }
+    setRewardStatEffects(updated);
+  };
+
+  const handleRemoveRewardStatEffect = (index: number) => {
+    setRewardStatEffects(rewardStatEffects.filter((_, i) => i !== index));
+  };
+
+  // Currency Effect handlers for Rewards (CURRENCY REWARD)
+  const handleAddRewardCurrencyEffect = () => {
+    setRewardCurrencyEffects([
+      ...rewardCurrencyEffects,
+      { type: 'currency', currencyName: 'Coins', currency: 'Coins', operation: 'increase', amount: 100 },
+    ]);
+  };
+
+  const handleUpdateRewardCurrencyEffect = (index: number, field: string, val: any) => {
+    const updated = [...rewardCurrencyEffects];
+    if (field === 'currencyName' || field === 'currency') {
+      updated[index] = {
+        ...updated[index],
+        currencyName: 'Coins',
+        currency: 'Coins',
+      };
+    } else if (field === 'amount') {
+      const rawVal = typeof val === 'number' ? val : parseInt(String(val), 10);
+      const wholeAmount = isNaN(rawVal) ? 1 : Math.max(1, Math.round(rawVal));
+      updated[index] = {
+        ...updated[index],
+        amount: wholeAmount,
+      };
+    } else if (field === 'operation') {
+      updated[index] = {
+        ...updated[index],
+        operation: val,
+      };
+    }
+    setRewardCurrencyEffects(updated);
+  };
+
+  const handleRemoveRewardCurrencyEffect = (index: number) => {
+    setRewardCurrencyEffects(rewardCurrencyEffects.filter((_, i) => i !== index));
+  };
+
+  // Stat Effect handlers for Penalties (STAT PENALTY)
+  const handleAddPenaltyStatEffect = () => {
+    const defaultStat = authoritativeStats[0]?.name || 'Strength';
+    setPenaltyStatEffects([
+      ...penaltyStatEffects,
+      { type: 'stat', statName: defaultStat, stat: defaultStat, operation: 'decrease', amount: 1 },
+    ]);
+  };
+
+  const handleUpdatePenaltyStatEffect = (index: number, field: string, val: any) => {
+    const updated = [...penaltyStatEffects];
+    if (field === 'stat') {
+      const match = authoritativeStats.find(
+        (s) => s.name === val || s.key === val || s.name.toLowerCase() === String(val).toLowerCase()
+      );
+      const statName = match ? match.name : val;
+      updated[index] = {
+        ...updated[index],
+        stat: statName,
+        statName: statName,
+      };
+    } else if (field === 'amount') {
+      const rawVal = typeof val === 'number' ? val : parseInt(String(val), 10);
+      const wholeAmount = isNaN(rawVal) ? 1 : Math.max(1, Math.round(rawVal));
+      updated[index] = {
+        ...updated[index],
+        amount: wholeAmount,
+      };
+    } else if (field === 'operation') {
+      updated[index] = {
+        ...updated[index],
+        operation: val,
+      };
+    }
+    setPenaltyStatEffects(updated);
+  };
+
+  const handleRemovePenaltyStatEffect = (index: number) => {
+    setPenaltyStatEffects(penaltyStatEffects.filter((_, i) => i !== index));
+  };
+
+  // Currency Effect handlers for Penalties (CURRENCY PENALTY)
+  const handleAddPenaltyCurrencyEffect = () => {
+    setPenaltyCurrencyEffects([
+      ...penaltyCurrencyEffects,
+      { type: 'currency', currencyName: 'Coins', currency: 'Coins', operation: 'decrease', amount: 100 },
+    ]);
+  };
+
+  const handleUpdatePenaltyCurrencyEffect = (index: number, field: string, val: any) => {
+    const updated = [...penaltyCurrencyEffects];
+    if (field === 'currencyName' || field === 'currency') {
+      updated[index] = {
+        ...updated[index],
+        currencyName: val,
+        currency: val,
+      };
+    } else if (field === 'amount') {
+      const rawVal = typeof val === 'number' ? val : parseInt(String(val), 10);
+      const wholeAmount = isNaN(rawVal) ? 1 : Math.max(1, Math.round(rawVal));
+      updated[index] = {
+        ...updated[index],
+        amount: wholeAmount,
+      };
+    } else if (field === 'operation') {
+      updated[index] = {
+        ...updated[index],
+        operation: val,
+      };
+    }
+    setPenaltyCurrencyEffects(updated);
+  };
+
+  const handleRemovePenaltyCurrencyEffect = (index: number) => {
+    setPenaltyCurrencyEffects(penaltyCurrencyEffects.filter((_, i) => i !== index));
+  };
+
   // Preset Applier
   const applyPreset = (preset: typeof PRESETS[0]) => {
+    const defaultStat = authoritativeStats[0]?.name || 'Strength';
     setTitle(preset.name);
     setDescription(preset.desc);
     setIcon(preset.icon);
@@ -389,9 +670,17 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
     setRewardCoins(String(preset.coins));
     setRewardItems(preset.items ? [...preset.items] : []);
     setPenaltyEnabled(preset.penaltyEnabled);
-    if (preset.penaltyType) setPenaltyType(preset.penaltyType);
-    if (preset.penaltyValue) setPenaltyValue(String(preset.penaltyValue));
-    if (preset.penaltyDesc) setPenaltyDescription(preset.penaltyDesc);
+    if (preset.penaltyType === 'STAT') {
+      setPenaltyStatEffects([{ type: 'stat', statName: defaultStat, stat: defaultStat, operation: 'decrease', amount: 1 }]);
+      setPenaltyCurrencyEffects([]);
+    } else if (preset.penaltyType === 'COIN') {
+      setPenaltyStatEffects([]);
+      setPenaltyCurrencyEffects([{ type: 'currency', currencyName: 'Coins', currency: 'Coins', operation: 'decrease', amount: preset.penaltyValue || 100 }]);
+    } else {
+      if (preset.penaltyType) setPenaltyType(preset.penaltyType);
+      if (preset.penaltyValue) setPenaltyValue(String(preset.penaltyValue));
+      if (preset.penaltyDesc) setPenaltyDescription(preset.penaltyDesc);
+    }
   };
 
   // Calculate live preview of expiration timestamp
@@ -459,29 +748,114 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
       }
     }
 
+    // Filter valid reward stat effects
+    const filteredRewardStatEffects = rewardStatEffects
+      .filter((e) => e && e.stat && e.amount > 0)
+      .map((e) => {
+        const match = authoritativeStats.find(
+          (s) => s.name === e.statName || s.name === e.stat || s.key === e.stat || s.name.toLowerCase() === String(e.stat).toLowerCase()
+        );
+        const statName = match ? match.name : (e.statName || e.stat);
+        const statKey = match ? match.key : normalizeStatKey(e.stat);
+        return {
+          type: 'stat' as const,
+          stat: statKey,
+          statName: statName,
+          operation: 'increase' as const,
+          amount: Math.max(1, Math.round(e.amount)),
+        };
+      });
+
+    // Filter valid reward currency effects
+    const filteredRewardCurrencyEffects = rewardCurrencyEffects
+      .filter((c) => c && c.amount > 0)
+      .map((c) => ({
+        type: 'currency' as const,
+        currencyName: c.currencyName || 'Coins',
+        currency: c.currency || 'Coins',
+        operation: 'increase' as const,
+        amount: Math.max(1, Math.round(c.amount)),
+      }));
+
+    const finalCoinsVal = filteredRewardCurrencyEffects.length > 0
+      ? filteredRewardCurrencyEffects[0].amount
+      : coinsVal;
+
     const structuredRewards: QuestRewards = {
       xp: xpVal,
-      coins: coinsVal,
+      coins: finalCoinsVal,
       title: rewardTitle.trim() || undefined,
       custom: rewardCustom.trim() || undefined,
       items: filteredRewardItems.length > 0 ? filteredRewardItems : undefined,
       stats: Object.keys(statsMap).length > 0 ? statsMap : undefined,
+      statEffects: filteredRewardStatEffects.length > 0 ? filteredRewardStatEffects : undefined,
+      currencyEffects: filteredRewardCurrencyEffects.length > 0 ? filteredRewardCurrencyEffects : undefined,
     };
 
     const rewardSummary = formatQuestRewardSummary(structuredRewards);
 
-    // Penalty
-    const pVal = penaltyValue.trim() ? parseFloat(penaltyValue) : undefined;
-    let pDesc = penaltyDescription.trim();
-    if (!pDesc && pVal !== undefined && penaltyEnabled) {
-      pDesc = `Lose ${pVal} ${penaltyType} if failed`;
+    // Penalty Filtering & Packaging
+    const filteredPenaltyStatEffects = penaltyStatEffects
+      .filter((e) => e && e.stat && e.amount > 0)
+      .map((e) => {
+        const match = authoritativeStats.find(
+          (s) => s.name === e.statName || s.name === e.stat || s.key === e.stat || s.name.toLowerCase() === String(e.stat).toLowerCase()
+        );
+        const statName = match ? match.name : (e.statName || e.stat);
+        const statKey = match ? match.key : normalizeStatKey(e.stat);
+        return {
+          type: 'stat' as const,
+          stat: statKey,
+          statName: statName,
+          operation: e.operation || 'decrease',
+          amount: Math.max(1, Math.round(e.amount)),
+        };
+      });
+
+    const filteredPenaltyCurrencyEffects = penaltyCurrencyEffects
+      .filter((c) => c && c.amount > 0)
+      .map((c) => ({
+        type: 'currency' as const,
+        currencyName: c.currencyName || 'Coins',
+        currency: c.currency || 'Coins',
+        operation: c.operation || 'decrease',
+        amount: Math.max(1, Math.round(c.amount)),
+      }));
+
+    let finalPenaltyType = 'STAT';
+    if (filteredPenaltyStatEffects.length > 0 && filteredPenaltyCurrencyEffects.length > 0) {
+      finalPenaltyType = 'STAT_AND_CURRENCY';
+    } else if (filteredPenaltyStatEffects.length > 0) {
+      finalPenaltyType = 'STAT';
+    } else if (filteredPenaltyCurrencyEffects.length > 0) {
+      finalPenaltyType = 'COIN';
+    } else {
+      finalPenaltyType = penaltyType || 'XP';
     }
+
+    const descParts: string[] = [];
+    if (filteredPenaltyStatEffects.length > 0) {
+      descParts.push(...filteredPenaltyStatEffects.map((e) => `${getStatIcon(e.stat)} ${e.statName || getStatFullName(e.stat)} -${e.amount}`));
+    }
+    if (filteredPenaltyCurrencyEffects.length > 0) {
+      descParts.push(...filteredPenaltyCurrencyEffects.map((c) => `🪙 ${c.currencyName || 'Coins'} -${c.amount}`));
+    }
+    const finalPenaltyDesc = descParts.length > 0 ? descParts.join(', ') : (penaltyDescription.trim() || undefined);
+
+    const firstPenaltyVal = filteredPenaltyStatEffects.length > 0
+      ? filteredPenaltyStatEffects[0].amount
+      : (filteredPenaltyCurrencyEffects.length > 0 ? filteredPenaltyCurrencyEffects[0].amount : (penaltyValue.trim() ? parseFloat(penaltyValue) : undefined));
 
     const normalizedPenalty: QuestPenalty = {
       enabled: penaltyEnabled,
-      type: penaltyType,
-      value: pVal,
-      description: pDesc || undefined,
+      type: finalPenaltyType,
+      value: firstPenaltyVal,
+      description: finalPenaltyDesc,
+      stat: filteredPenaltyStatEffects.length > 0 ? filteredPenaltyStatEffects[0].stat : undefined,
+      statOperation: filteredPenaltyStatEffects.length > 0 ? filteredPenaltyStatEffects[0].operation : undefined,
+      statEffects: filteredPenaltyStatEffects.length > 0 ? filteredPenaltyStatEffects : undefined,
+      currencyEffects: filteredPenaltyCurrencyEffects.length > 0 ? filteredPenaltyCurrencyEffects : undefined,
+      coins: filteredPenaltyCurrencyEffects.length > 0 ? filteredPenaltyCurrencyEffects[0].amount : undefined,
     };
 
     // Tags
@@ -514,11 +888,16 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
       expiresAt: finalExpiresAt,
       rewards: structuredRewards,
       reward: rewardSummary || undefined,
+      statEffects: filteredRewardStatEffects.length > 0 ? filteredRewardStatEffects : undefined,
+      currencyEffects: filteredRewardCurrencyEffects.length > 0 ? filteredRewardCurrencyEffects : undefined,
       penalty: normalizedPenalty,
       penaltyEnabled,
-      penaltyType,
-      penaltyValue: pVal,
-      penaltyDescription: pDesc || undefined,
+      penaltyType: finalPenaltyType,
+      penaltyValue: firstPenaltyVal,
+      penaltyDescription: finalPenaltyDesc,
+      penaltyStatEffects: filteredPenaltyStatEffects.length > 0 ? filteredPenaltyStatEffects : undefined,
+      penaltyCurrencyEffects: filteredPenaltyCurrencyEffects.length > 0 ? filteredPenaltyCurrencyEffects : undefined,
+      penaltyCoins: filteredPenaltyCurrencyEffects.length > 0 ? filteredPenaltyCurrencyEffects[0].amount : undefined,
       maxAttempts: maxAttempts.trim() ? parseInt(maxAttempts, 10) : undefined,
       cooldown: cooldown.trim() || undefined,
       tags,
@@ -1114,69 +1493,293 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
           {/* TAB: REWARDS */}
           {activeTab === 'rewards' && (
             <div className="space-y-5 animate-fade-in">
-              {/* Primary Progression Rewards: XP & Coins */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5 p-3.5 rounded-lg bg-slate-950 border border-slate-800">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
-                    <Zap className="w-4 h-4 text-cyan-400" /> XP Reward
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    placeholder="e.g. 500"
-                    value={rewardXp}
-                    onChange={(e) => setRewardXp(e.target.value)}
-                    className="w-full px-3 py-2 rounded bg-slate-900 border border-slate-700 text-cyan-300 font-bold text-sm focus:outline-none focus:border-cyan-400"
-                  />
-                  <p className="text-[11px] text-slate-400">Directly adds to Player XP upon completion</p>
-                </div>
-
-                <div className="space-y-1.5 p-3.5 rounded-lg bg-slate-950 border border-slate-800">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-                    <Coins className="w-4 h-4 text-amber-400" /> Coin / Gold Reward
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    placeholder="e.g. 250"
-                    value={rewardCoins}
-                    onChange={(e) => setRewardCoins(e.target.value)}
-                    className="w-full px-3 py-2 rounded bg-slate-900 border border-slate-700 text-amber-300 font-bold text-sm focus:outline-none focus:border-cyan-400"
-                  />
-                  <p className="text-[11px] text-slate-400">Directly credits player wallet</p>
-                </div>
+              {/* Primary XP Reward */}
+              <div className="p-3.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 text-cyan-400" /> XP Reward
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  placeholder="e.g. 500"
+                  value={rewardXp}
+                  onChange={(e) => setRewardXp(e.target.value)}
+                  className="w-full px-3 py-2 rounded bg-slate-900 border border-slate-700 text-cyan-300 font-bold text-sm focus:outline-none focus:border-cyan-400 font-mono"
+                />
+                <p className="text-[11px] text-slate-400">Directly adds to Player XP upon quest completion</p>
               </div>
 
-              {/* Title & Custom Rewards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                    Title Unlock (optional)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. The Iron-Willed, Shadow Sovereign"
-                    value={rewardTitle}
-                    onChange={(e) => setRewardTitle(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-cyan-400"
-                  />
+              {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                  1. 📊 STAT REWARD SECTION
+                  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+              <div className="p-4 rounded-lg bg-slate-950/90 border border-slate-800 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-2">
+                      <Activity className="w-4 h-4 text-emerald-400" />
+                      <span>📊 STAT REWARD</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Configure stat point gains awarded when this quest is completed.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddRewardStatEffect}
+                    disabled={authoritativeStats.length === 0}
+                    className="px-2.5 py-1 text-xs rounded bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 flex items-center gap-1 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Stat Reward
+                  </button>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                    Custom Lore / Other Reward
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Access to Hidden Sanctum, Secret Quest Trigger"
-                    value={rewardCustom}
-                    onChange={(e) => setRewardCustom(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-cyan-400"
-                  />
-                </div>
+                {authoritativeStats.length === 0 ? (
+                  <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-500/40 text-amber-300 text-xs font-mono">
+                    ⚠️ Authoritative Player Stats are currently unavailable. Stat selection is disabled to prevent invalid assignments.
+                  </div>
+                ) : rewardStatEffects.length === 0 ? (
+                  <div className="p-3.5 rounded-lg bg-slate-900/60 border border-dashed border-slate-800 text-center space-y-2">
+                    <p className="text-xs text-slate-400">
+                      No stat rewards configured.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleAddRewardStatEffect}
+                      className="px-3 py-1 text-xs rounded bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/80 transition"
+                    >
+                      + Add Stat Reward
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {rewardStatEffects.map((eff, idx) => {
+                      const matched = authoritativeStats.find(
+                        (s) => s.name.toLowerCase() === (eff.statName || eff.stat || '').toLowerCase() ||
+                               s.key.toLowerCase() === (eff.stat || '').toLowerCase()
+                      );
+                      const statName = matched ? matched.name : (eff.statName || eff.stat || 'Strength');
+                      const icon = matched ? matched.icon : getStatIcon(statName);
+                      const isValidAmount = Number.isInteger(eff.amount) && eff.amount >= 1;
+
+                      return (
+                        <div
+                          key={`reward-stat-${idx}`}
+                          className="p-3 rounded-lg bg-slate-900/90 border border-emerald-950/60 space-y-2.5"
+                        >
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                            {/* Stat Dropdown */}
+                            <div className="sm:col-span-6 space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                Stat:
+                              </label>
+                              <select
+                                id={`select-reward-stat-${idx}`}
+                                value={statName}
+                                disabled={authoritativeStats.length === 0}
+                                onChange={(e) => handleUpdateRewardStatEffect(idx, 'stat', e.target.value)}
+                                className="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-slate-100 text-xs font-mono font-bold focus:outline-none focus:border-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {authoritativeStats.map((opt) => (
+                                  <option key={opt.name} value={opt.name}>
+                                    {opt.icon} {opt.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Amount Input */}
+                            <div className="sm:col-span-5 space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                Amount:
+                              </label>
+                              <input
+                                id={`input-reward-stat-amount-${idx}`}
+                                type="number"
+                                min={1}
+                                step={1}
+                                placeholder="1"
+                                value={eff.amount === undefined || eff.amount === null ? '' : eff.amount}
+                                onChange={(e) => {
+                                  const parsed = parseInt(e.target.value, 10);
+                                  handleUpdateRewardStatEffect(idx, 'amount', isNaN(parsed) ? '' : Math.max(1, parsed));
+                                }}
+                                onBlur={() => {
+                                  if (!eff.amount || eff.amount < 1) {
+                                    handleUpdateRewardStatEffect(idx, 'amount', 1);
+                                  }
+                                }}
+                                className="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-emerald-300 font-bold font-mono text-xs focus:outline-none focus:border-emerald-400"
+                              />
+                            </div>
+
+                            {/* Delete Button */}
+                            <div className="sm:col-span-1 flex justify-end sm:justify-center pt-2 sm:pt-4">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveRewardStatEffect(idx)}
+                                className="p-2 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition cursor-pointer"
+                                title="Remove this stat reward"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Effect Preview & Validation */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-[11px]">
+                            <span className="text-slate-400">Effect preview:</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold px-2.5 py-0.5 rounded border bg-emerald-950/70 border-emerald-500/50 text-emerald-300">
+                                {icon} {statName} +{eff.amount || 1}
+                              </span>
+                              {isValidAmount ? (
+                                <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-0.5">
+                                  <Check className="w-3 h-3" /> Valid
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-amber-400 font-mono">
+                                  ⚠️ Whole number required (min 1)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              {/* Item Rewards Builder */}
+              {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                  2. 🪙 CURRENCY REWARD SECTION
+                  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+              <div className="p-4 rounded-lg bg-slate-950/90 border border-slate-800 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
+                      <Coins className="w-4 h-4 text-amber-400" />
+                      <span>🪙 CURRENCY REWARD</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Configure coin / currency rewards added directly to the player wallet upon completion.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddRewardCurrencyEffect}
+                    className="px-2.5 py-1 text-xs rounded bg-amber-950/70 hover:bg-amber-900 border border-amber-500/50 text-amber-300 flex items-center gap-1 transition cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Currency Reward
+                  </button>
+                </div>
+
+                {rewardCurrencyEffects.length === 0 ? (
+                  <div className="p-3.5 rounded-lg bg-slate-900/60 border border-dashed border-slate-800 text-center space-y-2">
+                    <p className="text-xs text-slate-400">
+                      No currency rewards configured.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleAddRewardCurrencyEffect}
+                      className="px-3 py-1 text-xs rounded bg-amber-950/80 border border-amber-500/40 text-amber-300 hover:bg-amber-900/80 transition"
+                    >
+                      + Add Currency Reward
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {rewardCurrencyEffects.map((cur, idx) => {
+                      const currencyName = cur.currencyName || cur.currency || 'Coins';
+                      const isValidAmount = Number.isInteger(cur.amount) && cur.amount >= 1;
+
+                      return (
+                        <div
+                          key={`reward-curr-${idx}`}
+                          className="p-3 rounded-lg bg-slate-900/90 border border-amber-950/60 space-y-2.5"
+                        >
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                            {/* Currency Dropdown */}
+                            <div className="sm:col-span-6 space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                Currency:
+                              </label>
+                              <select
+                                value={currencyName}
+                                onChange={(e) => handleUpdateRewardCurrencyEffect(idx, 'currencyName', e.target.value)}
+                                className="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-slate-100 text-xs font-mono font-bold focus:outline-none focus:border-amber-400"
+                              >
+                                {CURRENCY_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.icon} {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Amount Input */}
+                            <div className="sm:col-span-5 space-y-1">
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                Amount:
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                step={1}
+                                placeholder="100"
+                                value={cur.amount === undefined || cur.amount === null ? '' : cur.amount}
+                                onChange={(e) => {
+                                  const parsed = parseInt(e.target.value, 10);
+                                  handleUpdateRewardCurrencyEffect(idx, 'amount', isNaN(parsed) ? '' : Math.max(1, parsed));
+                                }}
+                                onBlur={() => {
+                                  if (!cur.amount || cur.amount < 1) {
+                                    handleUpdateRewardCurrencyEffect(idx, 'amount', 100);
+                                  }
+                                }}
+                                className="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-amber-300 font-bold font-mono text-xs focus:outline-none focus:border-amber-400"
+                              />
+                            </div>
+
+                            {/* Delete Button */}
+                            <div className="sm:col-span-1 flex justify-end sm:justify-center pt-2 sm:pt-4">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveRewardCurrencyEffect(idx)}
+                                className="p-2 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition cursor-pointer"
+                                title="Remove this currency reward"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Effect Preview & Validation */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-[11px]">
+                            <span className="text-slate-400">Effect preview:</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold px-2.5 py-0.5 rounded border bg-amber-950/70 border-amber-500/50 text-amber-300">
+                                🪙 {currencyName} +{cur.amount || 100}
+                              </span>
+                              {isValidAmount ? (
+                                <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-0.5">
+                                  <Check className="w-3 h-3" /> Valid
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-amber-400 font-mono">
+                                  ⚠️ Whole number required (min 1)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Item Drops / Inventory Rewards */}
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
@@ -1252,53 +1855,89 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
                 )}
               </div>
 
-              {/* Stat Bonus Builder */}
-              <div className="space-y-3 pt-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                    <Activity className="w-4 h-4 text-emerald-400" /> Stat Point Bonuses ({statBonuses.length})
+              {/* Title & Custom Lore Rewards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                    Title Unlock (optional)
                   </label>
-                  <button
-                    type="button"
-                    onClick={handleAddStatBonus}
-                    className="px-2.5 py-1 text-xs rounded bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 flex items-center gap-1 transition"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Add Stat Bonus
-                  </button>
+                  <input
+                    type="text"
+                    placeholder="e.g. The Iron-Willed, Shadow Sovereign"
+                    value={rewardTitle}
+                    onChange={(e) => setRewardTitle(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-cyan-400"
+                  />
                 </div>
 
-                {statBonuses.length > 0 && (
-                  <div className="space-y-2 max-h-36 overflow-y-auto pr-1">
-                    {statBonuses.map((sb, idx) => (
-                      <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-slate-950/70 border border-slate-800">
-                        <input
-                          type="text"
-                          placeholder="Stat Name (STR, AGI, INT, VIT)"
-                          value={sb.stat}
-                          onChange={(e) => handleUpdateStatBonus(idx, 'stat', e.target.value)}
-                          className="flex-1 px-3 py-1.5 rounded bg-slate-900 border border-slate-700 text-slate-200 text-xs uppercase font-mono focus:outline-none focus:border-cyan-400"
-                        />
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs text-emerald-400 font-bold">+</span>
-                          <input
-                            type="number"
-                            min={1}
-                            value={sb.value}
-                            onChange={(e) => handleUpdateStatBonus(idx, 'value', e.target.value)}
-                            className="w-16 px-2 py-1.5 rounded bg-slate-900 border border-slate-700 text-emerald-400 text-xs font-bold text-center focus:outline-none focus:border-cyan-400"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveStatBonus(idx)}
-                          className="p-1.5 rounded text-slate-400 hover:text-rose-400 transition"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                    Custom Lore / Other Reward
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Access to Hidden Sanctum, Secret Quest Trigger"
+                    value={rewardCustom}
+                    onChange={(e) => setRewardCustom(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+              </div>
+
+              {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                  3. LIVE REWARDS SUMMARY PREVIEW
+                  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+              <div className="p-3.5 rounded-lg bg-slate-900 border border-slate-800 space-y-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <Award className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Completion Rewards Summary Preview</span>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-xs font-mono">
+                  {rewardXp && parseInt(rewardXp, 10) > 0 && (
+                    <span className="px-2.5 py-1 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-bold flex items-center gap-1">
+                      <Zap className="w-3 h-3 text-cyan-400" /> +{rewardXp} XP
+                    </span>
+                  )}
+                  {rewardStatEffects.map((e, idx) => (
+                    <span
+                      key={`rew-st-${idx}`}
+                      className="px-2.5 py-1 rounded bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 font-bold"
+                    >
+                      {getStatIcon(e.stat)} {e.statName || getStatFullName(e.stat)} +{e.amount}
+                    </span>
+                  ))}
+                  {rewardCurrencyEffects.map((c, idx) => (
+                    <span
+                      key={`rew-cur-${idx}`}
+                      className="px-2.5 py-1 rounded bg-amber-950/80 border border-amber-500/40 text-amber-300 font-bold"
+                    >
+                      🪙 {c.currencyName || 'Coins'} +{c.amount}
+                    </span>
+                  ))}
+                  {rewardItems.map((item, idx) => (
+                    <span
+                      key={`rew-it-${idx}`}
+                      className="px-2.5 py-1 rounded bg-purple-950/80 border border-purple-500/40 text-purple-300 font-bold"
+                    >
+                      📦 {item.name} x{item.quantity || 1}
+                    </span>
+                  ))}
+                  {rewardTitle.trim() && (
+                    <span className="px-2.5 py-1 rounded bg-amber-950/60 border border-amber-500/30 text-amber-200 font-bold">
+                      👑 {rewardTitle.trim()}
+                    </span>
+                  )}
+                  {!rewardXp &&
+                    rewardStatEffects.length === 0 &&
+                    rewardCurrencyEffects.length === 0 &&
+                    rewardItems.length === 0 &&
+                    !rewardTitle.trim() && (
+                      <span className="text-slate-500 italic text-xs font-sans">
+                        No rewards configured.
+                      </span>
+                    )}
+                </div>
               </div>
             </div>
           )}
@@ -1322,8 +1961,8 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
                     </span>
                     <p className="text-[11px] text-slate-400">
                       {globalPenaltiesEnabled
-                        ? 'Penalties configured here will execute on failure/expiration.'
-                        : 'Global setting in Settings currently pauses all penalties.'}
+                        ? 'Penalties configured here will execute atomically on quest failure or expiration.'
+                        : 'Global setting in Settings currently pauses penalty enforcement.'}
                     </p>
                   </div>
                 </div>
@@ -1332,17 +1971,19 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
               {/* Penalty ON/OFF Toggle */}
               <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-200">
-                    Quest Incompletion Penalty
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                    <Shield className="w-4 h-4 text-rose-400" />
+                    <span>Quest Incompletion Penalty</span>
                   </div>
-                  <div className="text-xs text-slate-400">
-                    Define consequence if quest timer expires or attempt fails
+                  <div className="text-xs text-slate-400 mt-0.5">
+                    Enforce consequences (Stat deductions and/or Currency loss) if quest timer expires or attempt fails
                   </div>
                 </div>
                 <button
                   type="button"
+                  id="btn-toggle-custom-quest-penalty"
                   onClick={() => setPenaltyEnabled(!penaltyEnabled)}
-                  className={`px-4 py-2 rounded-lg border text-xs font-bold tracking-wider uppercase transition ${
+                  className={`px-4 py-2 rounded-lg border text-xs font-bold tracking-wider uppercase transition cursor-pointer ${
                     penaltyEnabled
                       ? 'bg-rose-950/70 border-rose-500 text-rose-300 shadow-md shadow-rose-950'
                       : 'bg-slate-900 border-slate-700 text-slate-500 hover:text-slate-300'
@@ -1352,54 +1993,311 @@ export const CustomQuestModal: React.FC<CustomQuestModalProps> = ({
                 </button>
               </div>
 
-              {/* Penalty Details */}
+              {/* Penalty Configurations (Separated Stat & Currency) */}
               {penaltyEnabled && (
-                <div className="space-y-4 p-4 rounded-lg bg-slate-950/80 border border-rose-950/60 animate-fade-in">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold uppercase tracking-wider text-rose-300">
-                        Penalty Type
-                      </label>
-                      <select
-                        id="select-custom-quest-penalty-type"
-                        value={penaltyType}
-                        onChange={(e) => setPenaltyType(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs font-mono focus:outline-none focus:border-rose-400"
+                <div className="space-y-6 animate-fade-in">
+                  {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                      1. 📊 STAT PENALTY SECTION
+                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+                  <div className="p-4 rounded-lg bg-slate-950/90 border border-slate-800 space-y-4">
+                    <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wider text-rose-400 flex items-center gap-2">
+                          <Activity className="w-4 h-4 text-rose-400" />
+                          <span>📊 STAT PENALTY</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-950/80 border border-rose-800/60 text-rose-300">
+                            {penaltyStatEffects.length} {penaltyStatEffects.length === 1 ? 'Penalty' : 'Penalties'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Deducts from authoritative Player Stats ({authoritativeStats.map((s) => s.name).join(', ') || 'None'}) upon failure.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        id="btn-add-stat-penalty"
+                        onClick={handleAddPenaltyStatEffect}
+                        disabled={authoritativeStats.length === 0}
+                        className="px-3 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/40 text-rose-300 text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <option value="XP">XP Deduction (Reduce XP)</option>
-                        <option value="COIN">Coin / Gold Deduction</option>
-                        <option value="FATIGUE">Fatigue Increase (+Fatigue)</option>
-                        <option value="STREAK">Reset Quest Streak to 0</option>
-                        <option value="CUSTOM">Custom System / Lore Penalty</option>
-                      </select>
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Stat Penalty</span>
+                      </button>
                     </div>
 
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold uppercase tracking-wider text-rose-300">
-                        Penalty Value / Amount
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        placeholder="e.g. 100"
-                        value={penaltyValue}
-                        onChange={(e) => setPenaltyValue(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-rose-300 font-bold text-xs focus:outline-none focus:border-rose-400"
-                      />
-                    </div>
+                    {authoritativeStats.length === 0 ? (
+                      <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-500/40 text-amber-300 text-xs font-mono">
+                        ⚠️ Authoritative Player Stats are currently unavailable. Stat selection is disabled to prevent invalid assignments.
+                      </div>
+                    ) : penaltyStatEffects.length === 0 ? (
+                      <div className="p-4 rounded border border-dashed border-slate-800 text-center text-xs text-slate-500">
+                        No stat penalties configured. Click <strong className="text-rose-400">+ Add Stat Penalty</strong> to penalize player stats.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {penaltyStatEffects.map((eff, idx) => {
+                          const matched = authoritativeStats.find(
+                            (s) => s.name.toLowerCase() === (eff.statName || eff.stat || '').toLowerCase() ||
+                                   s.key.toLowerCase() === (eff.stat || '').toLowerCase()
+                          );
+                          const statName = matched ? matched.name : (eff.statName || eff.stat || 'Strength');
+                          const icon = matched ? matched.icon : getStatIcon(statName);
+                          const isDecrease = eff.operation !== 'increase';
+                          const rawAmount = eff.amount;
+                          const isValidAmount = Number.isInteger(rawAmount) && rawAmount >= 1;
+
+                          return (
+                            <div
+                              key={idx}
+                              className="p-3 rounded-lg bg-slate-900/90 border border-rose-950/60 space-y-2.5"
+                            >
+                              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                                {/* Stat Dropdown */}
+                                <div className="sm:col-span-6 space-y-1">
+                                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                    Stat:
+                                  </label>
+                                  <select
+                                    id={`select-penalty-stat-${idx}`}
+                                    value={statName}
+                                    disabled={authoritativeStats.length === 0}
+                                    onChange={(e) => handleUpdatePenaltyStatEffect(idx, 'stat', e.target.value)}
+                                    className="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-slate-100 text-xs font-mono font-bold focus:outline-none focus:border-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {authoritativeStats.map((opt) => (
+                                      <option key={opt.name} value={opt.name}>
+                                        {opt.icon} {opt.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                {/* Amount Input */}
+                                <div className="sm:col-span-5 space-y-1">
+                                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                    Amount:
+                                  </label>
+                                  <input
+                                    id={`input-penalty-stat-amount-${idx}`}
+                                    type="number"
+                                    min={1}
+                                    step={1}
+                                    placeholder="1"
+                                    value={eff.amount === undefined || eff.amount === null ? '' : eff.amount}
+                                    onChange={(e) => {
+                                      const parsed = parseInt(e.target.value, 10);
+                                      handleUpdatePenaltyStatEffect(idx, 'amount', isNaN(parsed) ? '' : Math.max(1, parsed));
+                                    }}
+                                    onBlur={() => {
+                                      if (!eff.amount || eff.amount < 1) {
+                                        handleUpdatePenaltyStatEffect(idx, 'amount', 1);
+                                      }
+                                    }}
+                                    className="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-rose-300 font-bold font-mono text-xs focus:outline-none focus:border-rose-400"
+                                  />
+                                </div>
+
+                                {/* Delete Button */}
+                                <div className="sm:col-span-1 flex justify-end sm:justify-center pt-2 sm:pt-4">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemovePenaltyStatEffect(idx)}
+                                    className="p-2 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition cursor-pointer"
+                                    title="Remove this stat penalty"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Effect Preview & Validation */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-[11px]">
+                                <span className="text-slate-400">Effect preview:</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono font-bold px-2.5 py-0.5 rounded border bg-rose-950/70 border-rose-500/50 text-rose-300">
+                                    {icon} {statName} {isDecrease ? `-${eff.amount || 1}` : `+${eff.amount || 1}`}
+                                  </span>
+                                  {isValidAmount ? (
+                                    <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-0.5">
+                                      <Check className="w-3 h-3" /> Valid
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-amber-400 font-mono">
+                                      ⚠️ Whole number required (min 1)
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                      Penalty Description / Summary
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Lose 100 XP if failed, +20 Fatigue if neglected"
-                      value={penaltyDescription}
-                      onChange={(e) => setPenaltyDescription(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs focus:outline-none focus:border-rose-400"
-                    />
+                  {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                      2. 🪙 CURRENCY PENALTY SECTION
+                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+                  <div className="p-4 rounded-lg bg-slate-950/90 border border-slate-800 space-y-4">
+                    <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                          <Coins className="w-4 h-4 text-amber-400" />
+                          <span>🪙 CURRENCY PENALTY</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-950/80 border border-amber-800/60 text-amber-300">
+                            {penaltyCurrencyEffects.length} {penaltyCurrencyEffects.length === 1 ? 'Penalty' : 'Penalties'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Deducts player currency (Coins) upon failure. Kept strictly separate from player stats.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        id="btn-add-currency-penalty"
+                        onClick={handleAddPenaltyCurrencyEffect}
+                        className="px-3 py-1.5 rounded-lg bg-amber-950/60 hover:bg-amber-900/80 border border-amber-500/40 text-amber-300 text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Currency Penalty</span>
+                      </button>
+                    </div>
+
+                    {penaltyCurrencyEffects.length === 0 ? (
+                      <div className="p-4 rounded border border-dashed border-slate-800 text-center text-xs text-slate-500">
+                        No currency penalties configured. Click <strong className="text-amber-400">+ Add Currency Penalty</strong> to deduct Coins on failure.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {penaltyCurrencyEffects.map((cur, idx) => {
+                          const currencyName = cur.currencyName || cur.currency || 'Coins';
+                          const isDecrease = cur.operation !== 'increase';
+                          const rawAmount = cur.amount;
+                          const isValidAmount = Number.isInteger(rawAmount) && rawAmount >= 1;
+
+                          return (
+                            <div
+                              key={idx}
+                              className="p-3 rounded-lg bg-slate-900/90 border border-amber-950/60 space-y-2.5"
+                            >
+                              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                                {/* Currency Dropdown */}
+                                <div className="sm:col-span-6 space-y-1">
+                                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                    Currency:
+                                  </label>
+                                  <select
+                                    value={currencyName}
+                                    onChange={(e) => handleUpdatePenaltyCurrencyEffect(idx, 'currencyName', e.target.value)}
+                                    className="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-slate-100 text-xs font-mono font-bold focus:outline-none focus:border-amber-400"
+                                  >
+                                    {CURRENCY_OPTIONS.map((opt) => (
+                                      <option key={opt.value} value={opt.value}>
+                                        {opt.icon} {opt.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                {/* Amount Input */}
+                                <div className="sm:col-span-5 space-y-1">
+                                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                    Amount:
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    step={1}
+                                    placeholder="100"
+                                    value={cur.amount === undefined || cur.amount === null ? '' : cur.amount}
+                                    onChange={(e) => {
+                                      const parsed = parseInt(e.target.value, 10);
+                                      handleUpdatePenaltyCurrencyEffect(idx, 'amount', isNaN(parsed) ? '' : Math.max(1, parsed));
+                                    }}
+                                    onBlur={() => {
+                                      if (!cur.amount || cur.amount < 1) {
+                                        handleUpdatePenaltyCurrencyEffect(idx, 'amount', 100);
+                                      }
+                                    }}
+                                    className="w-full px-3 py-2 rounded bg-slate-950 border border-slate-700 text-amber-300 font-bold font-mono text-xs focus:outline-none focus:border-amber-400"
+                                  />
+                                </div>
+
+                                {/* Delete Button */}
+                                <div className="sm:col-span-1 flex justify-end sm:justify-center pt-2 sm:pt-4">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemovePenaltyCurrencyEffect(idx)}
+                                    className="p-2 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition cursor-pointer"
+                                    title="Remove this currency penalty"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Effect Preview & Validation */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-[11px]">
+                                <span className="text-slate-400">Effect preview:</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono font-bold px-2.5 py-0.5 rounded border bg-amber-950/70 border-amber-500/50 text-amber-300">
+                                    🪙 {currencyName} {isDecrease ? `-${cur.amount || 100}` : `+${cur.amount || 100}`}
+                                  </span>
+                                  {isValidAmount ? (
+                                    <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-0.5">
+                                      <Check className="w-3 h-3" /> Valid
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-amber-400 font-mono">
+                                      ⚠️ Whole number required (min 1)
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                      3. LIVE INCOMPLETION SUMMARY PREVIEW
+                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+                  <div className="p-3.5 rounded-lg bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Incompletion Penalty Summary Preview</span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 text-xs font-mono">
+                      {penaltyStatEffects.length === 0 && penaltyCurrencyEffects.length === 0 ? (
+                        <span className="text-slate-500 italic text-xs font-sans">
+                          No penalties will be applied on failure.
+                        </span>
+                      ) : (
+                        <>
+                          {penaltyStatEffects.map((e, idx) => (
+                            <span
+                              key={`st-${idx}`}
+                              className="px-2.5 py-1 rounded bg-rose-950/80 border border-rose-500/40 text-rose-300 font-bold"
+                            >
+                              {getStatIcon(e.stat)} {e.statName || getStatFullName(e.stat)} {e.operation === 'increase' ? `+${e.amount}` : `-${e.amount}`}
+                            </span>
+                          ))}
+                          {penaltyCurrencyEffects.map((c, idx) => (
+                            <span
+                              key={`cur-${idx}`}
+                              className="px-2.5 py-1 rounded bg-amber-950/80 border border-amber-500/40 text-amber-300 font-bold"
+                            >
+                              🪙 {c.currencyName || 'Coins'} {c.operation === 'increase' ? `+${c.amount}` : `-${c.amount}`}
+                            </span>
+                          ))}
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

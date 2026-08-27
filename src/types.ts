@@ -29,21 +29,46 @@ export interface QuestRewardItem {
   rarity?: string;
 }
 
+export interface QuestStatEffect {
+  type?: 'stat';
+  stat: 'STR' | 'INT' | 'SKL' | 'DISC' | 'STA' | string;
+  statName?: string;
+  operation: 'increase' | 'decrease' | 'add' | 'subtract';
+  amount: number;
+}
+
+export interface QuestCurrencyEffect {
+  type?: 'currency';
+  currencyName?: 'Coins' | string;
+  currency?: 'Coins' | string;
+  operation: 'increase' | 'decrease' | 'add' | 'subtract';
+  amount: number;
+}
+
 export interface QuestRewards {
   xp?: number;
   coins?: number;
   items?: QuestRewardItem[];
   stats?: Record<string, any>;
+  statEffects?: QuestStatEffect[];
+  currencyEffects?: QuestCurrencyEffect[];
   title?: string;
   custom?: string;
 }
 
 export interface QuestPenalty {
   enabled: boolean;
-  type: 'XP' | 'COIN' | 'STAT' | 'CUSTOM' | string;
+  type?: 'XP' | 'COIN' | 'STAT' | 'FATIGUE' | 'STREAK' | 'ITEM' | 'CUSTOM' | string;
   value?: number | string;
   description?: string;
   duration?: string;
+  stat?: string;
+  statName?: string;
+  statOperation?: 'increase' | 'decrease';
+  stats?: Record<string, any>;
+  statEffects?: QuestStatEffect[];
+  currencyEffects?: QuestCurrencyEffect[];
+  coins?: number;
 }
 
 export interface QuestItem {
@@ -71,12 +96,18 @@ export interface QuestItem {
   completionRequirement?: string;
   reward?: string | Record<string, any>;
   rewards?: QuestRewards;
+  rewardApplied?: boolean;
+  statEffects?: QuestStatEffect[];
   penalty?: string | Record<string, any> | QuestPenalty;
   penaltyEnabled?: boolean;
   penaltyType?: 'XP' | 'COIN' | 'FATIGUE' | 'STREAK' | 'ITEM' | 'STAT' | 'CUSTOM' | string;
   penaltyValue?: number | string;
   penaltyDescription?: string;
   penaltyApplied?: boolean;
+  penaltyStats?: Record<string, any>;
+  penaltyStatEffects?: QuestStatEffect[];
+  penaltyCurrencyEffects?: QuestCurrencyEffect[];
+  penaltyCoins?: number;
   completedAt?: string;
   category?: 'daily' | 'custom' | 'hidden' | 'boss_chain' | 'emergency' | 'special_event' | string;
   priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string;
@@ -198,6 +229,11 @@ export interface PlayerProgression {
   [key: string]: any;
 }
 
+export interface PlayerCurrency {
+  coins: number;
+  [key: string]: any;
+}
+
 export interface PlayerState {
   playerId: string;
   systemVersion: string;
@@ -206,6 +242,10 @@ export interface PlayerState {
   level: string;
   xp: string;
   status: string;
+
+  // Authoritative Core Currency
+  currency: PlayerCurrency;
+  coins?: number; // Convenience direct accessor
   
   // 24-Hour Quest Refresh Cycle Timestamps & Refresh Request State
   questCycleStartedAt?: string; // ISO 8601
@@ -220,6 +260,7 @@ export interface PlayerState {
   // Expandable Structured Sections
   progression: PlayerProgression;
   attributes: Record<string, any>;
+  stats?: Record<string, any>;
   skills: (string | SkillItem)[];
   quests: (string | QuestItem)[];
   achievements: (string | AchievementItem)[];
@@ -338,6 +379,7 @@ export interface SystemCoreDatabase {
 export interface StateChangeSummary {
   progressionUpdates?: Partial<PlayerProgression>;
   attributesUpdated?: Record<string, any>;
+  currencyUpdated?: { coins?: number; coinsDelta?: number; [key: string]: any };
   skillsAdded?: (string | SkillItem)[];
   questsUpdated?: (string | QuestItem)[];
   achievementsAdded?: (string | AchievementItem)[];
