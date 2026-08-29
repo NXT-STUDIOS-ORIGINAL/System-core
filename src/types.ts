@@ -323,6 +323,14 @@ export interface ChatSession {
 
 export type GeminiConnectionStatus = 'CONNECTED' | 'NOT_TESTED' | 'ERROR' | 'QUOTA_EXCEEDED';
 
+export type GeminiErrorCategory =
+  | 'API key error'
+  | 'Model error'
+  | 'Quota error'
+  | 'Permission error'
+  | 'Network error'
+  | 'Unknown error';
+
 export interface GeminiModelOption {
   id: string;
   name: string;
@@ -330,13 +338,21 @@ export interface GeminiModelOption {
   isRecommended?: boolean;
 }
 
+export interface GeminiDiagnosticInfo {
+  environment: 'Web' | 'Android';
+  model: string;
+  status: string;
+  details?: string;
+}
+
 export interface GeminiTestResult {
   connected: boolean;
   model: string;
   latencyMs?: number;
   message?: string;
-  category?: 'Invalid API key' | 'Model unavailable' | 'Quota exceeded' | 'Network error' | 'Permission error' | 'Request rejected';
+  category?: GeminiErrorCategory | string;
   error?: string;
+  diagnostics?: GeminiDiagnosticInfo;
 }
 
 export interface GeminiStatusInfo {

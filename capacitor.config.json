@@ -1,0 +1,8 @@
+{
+  "appId": "com.systemcore.app",
+  "appName": "SYSTEM CORE",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

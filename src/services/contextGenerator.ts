@@ -9,6 +9,7 @@ import {
   InventoryItem,
 } from '../types';
 import { getQuestTimingType, formatDynamicTimer, parseQuestPenalty } from './questManager';
+import { getPlayerCoins } from './currencyManager';
 
 /**
  * Format dynamic progression data
@@ -41,13 +42,22 @@ function formatProgressionBlock(
 /**
  * Format collection or return 'NO DATA'
  */
-function formatDataBlock(data: any): string {
+function formatDataBlock(data: any, filterCurrency: boolean = false): string {
   if (data === null || data === undefined) {
     return 'NO DATA';
   }
   if (Array.isArray(data)) {
     if (data.length === 0) return 'NO DATA';
-    return data
+    const filteredArray = filterCurrency
+      ? data.filter((item) => {
+          if (typeof item === 'string') {
+            return !/^coins?\b/i.test(item.trim());
+          }
+          return true;
+        })
+      : data;
+    if (filteredArray.length === 0) return 'NO DATA';
+    return filteredArray
       .map((item) => {
         if (typeof item === 'string') return `- ${item}`;
         if (typeof item === 'object') {
@@ -75,7 +85,12 @@ function formatDataBlock(data: any): string {
       .join('\n');
   }
   if (typeof data === 'object') {
-    const keys = Object.keys(data);
+    const keys = Object.keys(data).filter((k) => {
+      if (filterCurrency) {
+        return k.toLowerCase() !== 'coins' && k.toLowerCase() !== 'coin' && k.toLowerCase() !== 'currency';
+      }
+      return true;
+    });
     if (keys.length === 0) return 'NO DATA';
     return keys
       .map((key) => {
@@ -351,7 +366,10 @@ export function generateContextPackage(
     formatProgressionBlock(p.progression, String(levelVal), String(xpVal)),
     '',
     'ATTRIBUTES:',
-    formatDataBlock(p.attributes),
+    formatDataBlock(p.attributes, true),
+    '',
+    'CURRENCY:',
+    `Coins: ${getPlayerCoins(p)}`,
     '',
     'SKILLS:',
     formatDataBlock(p.skills),
@@ -419,7 +437,10 @@ export function generatePlayerData(
     formatProgressionBlock(p.progression, String(levelVal), String(xpVal)),
     '',
     'ATTRIBUTES:',
-    formatDataBlock(p.attributes),
+    formatDataBlock(p.attributes, true),
+    '',
+    'CURRENCY:',
+    `Coins: ${getPlayerCoins(p)}`,
     '',
     'SKILLS:',
     formatDataBlock(p.skills),
@@ -476,9 +497,9 @@ export function generateChatTransferPrompt(db: SystemCoreDatabase): string {
     `CURRENT PLAYER: ${playerId} | STATE VERSION: v${stateVersion} | SESSION VERSION: v${sessionVersion}`,
     '',
     'CRITICAL SYSTEM CONTINUITY RULES:',
-    '1. AUTHORITATIVE STATE: The accompanying PLAYER DATA is the single source of truth for the player state, progression, and historical variables.',
-    '2. NO RESET: Under no circumstances should player progression, level, XP, inventory, quest status, or attributes reset to default or zero.',
-    '3. NO LOSS OF DATA: All existing variables, skills, quests, achievements, and past memory entries must be strictly preserved.',
+    '1. AUTHORITATIVE STATE: The accompanying PLAYER DATA is the single source of truth for the player state, progression, currency balances, and historical variables.',
+    '2. NO RESET: Under no circumstances should player progression, level, XP, currency (Coins), inventory, quest status, or attributes reset to default or zero.',
+    '3. NO LOSS OF DATA: All existing variables, currency (Coins), skills, quests, achievements, and past memory entries must be strictly preserved.',
     '4. NO FABRICATION / INVENTING: Do not invent stats, skills, or items that are not in the record or not earned.',
     '5. SEAMLESS PROGRESSION: Continue operating the System naturally from the exact state provided below.',
     '6. CONTINUITY AWARENESS: Maintain full awareness of ongoing quest chains (including Boss Chains, Special Trials), revealed hidden mechanics, and past System rulings.',

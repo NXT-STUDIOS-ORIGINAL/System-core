@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SYSTEM CORE</string>
+    <string name="title_activity_main">SYSTEM CORE</string>
+    <string name="package_name">com.systemcore.app</string>
+    <string name="custom_url_scheme">com.systemcore.app</string>
+</resources>

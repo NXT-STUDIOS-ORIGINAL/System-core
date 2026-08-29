@@ -291,17 +291,17 @@ export const SettingsScreen: React.FC = () => {
       const res = await testGeminiConnection(activeKey, geminiModel);
       setGeminiTestResult(res);
       if (res.connected) {
-        showToast(`Gemini Connection ✓ (${res.latencyMs}ms)`, 'success');
+        showToast(`🟢 GEMINI ONLINE (${res.latencyMs}ms)`, 'success');
       } else {
         const errorMsg = res.category ? `[${res.category}] ${res.error || 'Connection failed'}` : (res.error || 'Check configuration');
-        showToast(`Gemini Connection Failed: ${errorMsg}`, 'error');
+        showToast(`🔴 GEMINI OFFLINE: ${errorMsg}`, 'error');
       }
     } catch (err: any) {
       setGeminiTestResult({
         connected: false,
         model: geminiModel,
-        category: 'Network error',
-        error: err.message || 'Network failure',
+        category: 'Unknown error',
+        error: err.message || 'Connection test failed',
       });
       showToast('Gemini Connection test failed.', 'error');
     } finally {
@@ -1006,7 +1006,7 @@ export const SettingsScreen: React.FC = () => {
             <div className={`p-4 border font-mono text-xs animate-in fade-in duration-150 ${
               geminiTestResult.connected
                 ? 'border-emerald-500/50 bg-emerald-950/30 text-emerald-300'
-                : geminiTestResult.category === 'Quota exceeded'
+                : geminiTestResult.category === 'Quota error' || geminiTestResult.category === 'Quota exceeded'
                 ? 'border-amber-500/50 bg-amber-950/30 text-amber-300'
                 : 'border-rose-500/50 bg-rose-950/30 text-rose-300'
             }`}>
@@ -1019,10 +1019,10 @@ export const SettingsScreen: React.FC = () => {
                   )}
                   <span>
                     {geminiTestResult.connected
-                      ? 'Gemini Connection ✓'
+                      ? '🟢 GEMINI ONLINE'
                       : geminiTestResult.category
-                      ? `Gemini Connection Failed — ${geminiTestResult.category}`
-                      : 'Gemini Connection Failed'}
+                      ? `🔴 GEMINI OFFLINE — ${geminiTestResult.category}`
+                      : '🔴 GEMINI OFFLINE'}
                   </span>
                 </div>
                 {geminiTestResult.latencyMs !== undefined && (
@@ -1033,9 +1033,51 @@ export const SettingsScreen: React.FC = () => {
               </div>
               <p className="text-[11px] mt-1.5 opacity-90 leading-relaxed">
                 {geminiTestResult.connected
-                  ? `Successfully authenticated and contacted ${geminiTestResult.model}. Ready to parse and mutate RPG system updates.`
+                  ? `Model: ${geminiTestResult.model} — Authenticated successfully via official @google/genai SDK. Ready for structured state mutations.`
                   : (geminiTestResult.error || 'Failed to communicate with Gemini API. Check your API key or model selection.')}
               </p>
+
+              {/* Diagnostic Information */}
+              {geminiTestResult.diagnostics && (
+                <div className="mt-3 pt-3 border-t border-[#1a2b3c]/80 font-mono text-[11px] space-y-2 bg-[#05070a]/90 p-3 rounded">
+                  <div className="text-[10px] text-[#00f2ff] font-bold uppercase tracking-wider flex items-center justify-between border-b border-[#1a2b3c] pb-1">
+                    <span>CONNECTION DIAGNOSTICS</span>
+                    <span className="text-slate-500 text-[9px]">OFFICIAL SDK TELEMETRY</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-1.5 text-[11px]">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <span className="text-slate-400">Environment:</span>
+                      <span className="text-slate-200 font-semibold px-2 py-0.5 bg-[#0a0f16] border border-[#1a2b3c] rounded text-[10px]">
+                        {geminiTestResult.diagnostics.environment}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <span className="text-slate-400">Target Model:</span>
+                      <span className="text-[#00f2ff] font-semibold text-[10px]">
+                        {geminiTestResult.diagnostics.model}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <span className="text-slate-400">Status:</span>
+                      <span className={`font-semibold text-[10px] ${geminiTestResult.connected ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {geminiTestResult.diagnostics.status}
+                      </span>
+                    </div>
+
+                    {geminiTestResult.diagnostics.details && (
+                      <div className="flex flex-col gap-1 pt-1 border-t border-[#1a2b3c]/50">
+                        <span className="text-slate-400 text-[10px]">Details:</span>
+                        <pre className="bg-[#0a0f16] border border-[#1a2b3c] p-2 text-[10px] text-slate-300 whitespace-pre-wrap break-all max-h-24 overflow-y-auto font-mono">
+                          {geminiTestResult.diagnostics.details}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

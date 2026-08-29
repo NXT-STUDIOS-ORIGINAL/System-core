@@ -35,6 +35,7 @@ import {
   AlertTriangle,
   Timer,
   Copy,
+  Coins,
 } from 'lucide-react';
 import { ProfileAvatar } from './ProfileAvatar';
 import { XpProgressBar } from './XpProgressBar';
@@ -43,6 +44,7 @@ import { ItemDefinitionModal } from './ItemDefinitionModal';
 import { CustomQuestModal } from './CustomQuestModal';
 import { calculatePlayerXp } from '../utils/xpHelper';
 import { ItemDefinition, InventoryItem, QuestItem } from '../types';
+import { getPlayerCoins } from '../services/currencyManager';
 import {
   getQuestTimingType,
   formatDynamicTimer,
@@ -197,6 +199,25 @@ export const PlayerScreen: React.FC = () => {
   };
 
   const renderSectionContent = (data: any, label: string) => {
+    // Currency is NOT a stat - Coins must never appear in Stats panel
+    if (label === 'Stats') {
+      if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+        const filtered: Record<string, any> = {};
+        for (const [k, v] of Object.entries(data)) {
+          if (['coins', 'coin', 'currency'].includes(k.toLowerCase())) continue;
+          filtered[k] = v;
+        }
+        data = filtered;
+      } else if (Array.isArray(data)) {
+        data = data.filter((item) => {
+          if (typeof item === 'string') {
+            return !/^coins?\b/i.test(item.trim());
+          }
+          return true;
+        });
+      }
+    }
+
     if (
       data === null ||
       data === undefined ||
@@ -461,7 +482,7 @@ export const PlayerScreen: React.FC = () => {
   const importantMemories = player.importantMemory || [];
 
   return (
-    <div className="space-y-4 animate-in fade-in duration-200">
+    <div className="space-y-4 pb-12 animate-in fade-in duration-200">
       {/* Top Banner */}
       <div className="hud-panel p-4 sm:p-5 border border-[#1a2b3c] hud-border-bracket flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
@@ -658,137 +679,6 @@ export const PlayerScreen: React.FC = () => {
         )}
       </div>
 
-      {/* Memory Architecture Section (IMPORTANT MEMORY & RECENT MEMORY) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* IMPORTANT MEMORY */}
-        <div className="hud-panel p-5 border border-[#1a2b3c] flex flex-col">
-          <div className="flex items-center justify-between pb-3 mb-3 border-b border-[#1a2b3c]">
-            <div className="flex items-center gap-2">
-              <Bookmark className="w-4 h-4 text-amber-400" />
-              <h3 className="text-[10px] font-bold font-mono text-slate-200 uppercase tracking-[0.2em]">
-                IMPORTANT MEMORY ({importantMemories.length})
-              </h3>
-            </div>
-
-            <button
-              onClick={() => setIsAddingImportant(!isAddingImportant)}
-              className="flex items-center gap-1 text-[10px] font-mono text-amber-400 hover:underline uppercase"
-            >
-              <Plus className="w-3 h-3" />
-              <span>ADD MEMORY</span>
-            </button>
-          </div>
-
-          {isAddingImportant && (
-            <div className="mb-3 p-3 bg-[#05070a] border border-amber-500/40 font-mono text-xs space-y-2">
-              <input
-                type="text"
-                value={newImportantText}
-                onChange={(e) => setNewImportantText(e.target.value)}
-                placeholder="Enter permanent milestone / critical memory..."
-                className="w-full p-2 bg-[#0c1420] border border-[#1a2b3c] text-slate-200 focus:outline-none focus:border-amber-400 font-mono text-xs"
-                autoFocus
-              />
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setIsAddingImportant(false)}
-                  className="px-2 py-1 text-slate-400 hover:text-slate-200 text-xs"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleAddImportant}
-                  className="px-3 py-1 bg-amber-500/20 border border-amber-500 text-amber-300 font-bold text-xs"
-                >
-                  Save Permanent Memory
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="flex-1 max-h-[320px] overflow-y-auto space-y-2">
-            {importantMemories.length === 0 ? (
-              <div className="p-4 text-center font-mono text-xs text-slate-500 italic bg-[#05070a] border border-[#1a2b3c]">
-                No important memories stored. Mark critical milestones or tag them with [IMPORTANT MEMORY].
-              </div>
-            ) : (
-              importantMemories.map((item, idx) => {
-                const summary = typeof item === 'string' ? item : item.summary;
-                const timestamp = typeof item === 'object' && item.timestamp ? new Date(item.timestamp).toLocaleDateString() : '';
-                return (
-                  <div
-                    key={idx}
-                    className="p-3 bg-[#05070a] border border-[#1a2b3c] flex items-start justify-between gap-2 font-mono text-xs group"
-                  >
-                    <div className="flex items-start gap-2">
-                      <span className="text-amber-400 font-bold shrink-0">[{idx + 1}]</span>
-                      <div>
-                        <p className="text-slate-200">{summary}</p>
-                        {timestamp && <span className="text-[10px] text-slate-500 mt-0.5 block">{timestamp}</span>}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => deleteImportantMemory(idx)}
-                      className="text-slate-600 hover:text-rose-400 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Remove"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        {/* ROLLING RECENT MEMORY */}
-        <div className="hud-panel p-5 border border-[#1a2b3c] flex flex-col">
-          <div className="flex items-center justify-between pb-3 mb-3 border-b border-[#1a2b3c]">
-            <div className="flex items-center gap-2">
-              <Cpu className="w-4 h-4 text-[#00f2ff]" />
-              <h3 className="text-[10px] font-bold font-mono text-slate-200 uppercase tracking-[0.2em]">
-                RECENT MEMORY ({recentMemories.length}/50 ROLLING)
-              </h3>
-            </div>
-            <span className="text-[10px] font-mono text-slate-500">Auto-trimmed buffer</span>
-          </div>
-
-          <div className="flex-1 max-h-[320px] overflow-y-auto space-y-2">
-            {recentMemories.length === 0 ? (
-              <div className="p-4 text-center font-mono text-xs text-slate-500 italic bg-[#05070a] border border-[#1a2b3c]">
-                No recent memories generated yet. Paste a System message in System Input to generate memories.
-              </div>
-            ) : (
-              recentMemories.map((item, idx) => (
-                <div
-                  key={item.id || idx}
-                  className="p-3 bg-[#05070a] border border-[#1a2b3c] flex items-start justify-between gap-2 font-mono text-xs group"
-                >
-                  <div className="flex items-start gap-2">
-                    <span className="text-[#00f2ff] font-bold shrink-0">[{idx + 1}]</span>
-                    <div>
-                      <p className="text-slate-200">{item.summary}</p>
-                      {item.timestamp && (
-                        <span className="text-[10px] text-slate-500 mt-0.5 block">
-                          {new Date(item.timestamp).toLocaleTimeString()}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => deleteRecentMemory(idx)}
-                    className="text-slate-600 hover:text-rose-400 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="Remove from memory"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* Detailed System Collections */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* STATS */}
@@ -802,15 +692,28 @@ export const PlayerScreen: React.FC = () => {
           {renderSectionContent(player.stats || player.attributes, 'Stats')}
         </div>
 
-        {/* SKILLS */}
+        {/* CURRENCY */}
         <div className="hud-panel p-5 border border-[#1a2b3c]">
-          <div className="flex items-center gap-2 border-b border-[#1a2b3c] pb-3 mb-3">
-            <Layers className="w-4 h-4 text-[#00f2ff]" />
-            <h3 className="text-[10px] font-bold font-mono text-slate-300 uppercase tracking-[0.2em]">
-              SKILLS
-            </h3>
+          <div className="flex items-center justify-between border-b border-[#1a2b3c] pb-3 mb-3">
+            <div className="flex items-center gap-2">
+              <Coins className="w-4 h-4 text-amber-400" />
+              <h3 className="text-[10px] font-bold font-mono text-slate-300 uppercase tracking-[0.2em]">
+                🪙 CURRENCY
+              </h3>
+            </div>
+            <span className="text-[10px] font-mono text-amber-400/80 uppercase">Authoritative Wallet</span>
           </div>
-          {renderSectionContent(player.skills, 'Skills')}
+          <div className="space-y-2 font-mono">
+            <div className="p-3 bg-[#05070a] border border-[#1a2b3c] flex justify-between items-center">
+              <span className="text-slate-300 uppercase tracking-wider text-xs flex items-center gap-1.5">
+                <span className="text-amber-400">🪙</span>
+                <strong className="text-slate-200">Coins:</strong>
+              </span>
+              <span className="text-amber-400 font-bold text-base sm:text-lg">
+                {getPlayerCoins(player)}
+              </span>
+            </div>
+          </div>
         </div>
 
         {/* QUESTS - 24-HOUR REFRESH & PERSISTENCE HUD */}
@@ -1350,15 +1253,26 @@ export const PlayerScreen: React.FC = () => {
           </div>
         </div>
 
-        {/* ACHIEVEMENTS */}
+        {/* INVENTORY */}
         <div className="hud-panel p-5 border border-[#1a2b3c]">
           <div className="flex items-center gap-2 border-b border-[#1a2b3c] pb-3 mb-3">
-            <Award className="w-4 h-4 text-emerald-400" />
+            <Package className="w-4 h-4 text-[#00f2ff]" />
             <h3 className="text-[10px] font-bold font-mono text-slate-300 uppercase tracking-[0.2em]">
-              ACHIEVEMENTS
+              INVENTORY
             </h3>
           </div>
-          {renderSectionContent(player.achievements, 'Achievements')}
+          {renderInventoryContent()}
+        </div>
+
+        {/* SKILLS */}
+        <div className="hud-panel p-5 border border-[#1a2b3c]">
+          <div className="flex items-center gap-2 border-b border-[#1a2b3c] pb-3 mb-3">
+            <Layers className="w-4 h-4 text-[#00f2ff]" />
+            <h3 className="text-[10px] font-bold font-mono text-slate-300 uppercase tracking-[0.2em]">
+              SKILLS
+            </h3>
+          </div>
+          {renderSectionContent(player.skills, 'Skills')}
         </div>
 
         {/* TITLES */}
@@ -1372,15 +1286,96 @@ export const PlayerScreen: React.FC = () => {
           {renderSectionContent(player.titles, 'Titles')}
         </div>
 
-        {/* INVENTORY */}
+        {/* ACHIEVEMENTS */}
         <div className="hud-panel p-5 border border-[#1a2b3c]">
           <div className="flex items-center gap-2 border-b border-[#1a2b3c] pb-3 mb-3">
-            <Package className="w-4 h-4 text-[#00f2ff]" />
+            <Award className="w-4 h-4 text-emerald-400" />
             <h3 className="text-[10px] font-bold font-mono text-slate-300 uppercase tracking-[0.2em]">
-              INVENTORY
+              ACHIEVEMENTS
             </h3>
           </div>
-          {renderInventoryContent()}
+          {renderSectionContent(player.achievements, 'Achievements')}
+        </div>
+
+        {/* IMPORTANT MEMORY */}
+        <div className="hud-panel p-5 border border-[#1a2b3c] flex flex-col">
+          <div className="flex items-center justify-between pb-3 mb-3 border-b border-[#1a2b3c]">
+            <div className="flex items-center gap-2">
+              <Bookmark className="w-4 h-4 text-amber-400" />
+              <h3 className="text-[10px] font-bold font-mono text-slate-200 uppercase tracking-[0.2em]">
+                IMPORTANT MEMORY ({importantMemories.length})
+              </h3>
+            </div>
+
+            <button
+              onClick={() => setIsAddingImportant(!isAddingImportant)}
+              className="flex items-center gap-1 text-[10px] font-mono text-amber-400 hover:underline uppercase cursor-pointer"
+            >
+              <Plus className="w-3 h-3" />
+              <span>ADD MEMORY</span>
+            </button>
+          </div>
+
+          {isAddingImportant && (
+            <div className="mb-3 p-3 bg-[#05070a] border border-amber-500/40 font-mono text-xs space-y-2">
+              <input
+                type="text"
+                value={newImportantText}
+                onChange={(e) => setNewImportantText(e.target.value)}
+                placeholder="Enter permanent milestone / critical memory..."
+                className="w-full p-2 bg-[#0c1420] border border-[#1a2b3c] text-slate-200 focus:outline-none focus:border-amber-400 font-mono text-xs"
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setIsAddingImportant(false)}
+                  className="px-2 py-1 text-slate-400 hover:text-slate-200 text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddImportant}
+                  className="px-3 py-1 bg-amber-500/20 border border-amber-500 text-amber-300 font-bold text-xs cursor-pointer"
+                >
+                  Save Permanent Memory
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex-1 max-h-[320px] overflow-y-auto space-y-2">
+            {importantMemories.length === 0 ? (
+              <div className="p-4 text-center font-mono text-xs text-slate-500 italic bg-[#05070a] border border-[#1a2b3c]">
+                No important memories stored. Mark critical milestones or tag them with [IMPORTANT MEMORY].
+              </div>
+            ) : (
+              importantMemories.map((item, idx) => {
+                const summary = typeof item === 'string' ? item : item.summary;
+                const timestamp = typeof item === 'object' && item.timestamp ? new Date(item.timestamp).toLocaleDateString() : '';
+                return (
+                  <div
+                    key={idx}
+                    className="p-3 bg-[#05070a] border border-[#1a2b3c] flex items-start justify-between gap-2 font-mono text-xs group"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="text-amber-400 font-bold shrink-0">[{idx + 1}]</span>
+                      <div>
+                        <p className="text-slate-200">{summary}</p>
+                        {timestamp && <span className="text-[10px] text-slate-500 mt-0.5 block">{timestamp}</span>}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => deleteImportantMemory(idx)}
+                      className="text-slate-600 hover:text-rose-400 p-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                      title="Remove"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
 
         {/* WORLD STATE */}
@@ -1403,6 +1398,53 @@ export const PlayerScreen: React.FC = () => {
             </h3>
           </div>
           {renderSectionContent(player.systemVariables, 'System Variables')}
+        </div>
+      </div>
+
+      {/* ROLLING RECENT MEMORY - ABSOLUTE BOTTOM OF PLAYER SCREEN */}
+      <div className="hud-panel p-5 border border-[#1a2b3c] flex flex-col">
+        <div className="flex items-center justify-between pb-3 mb-3 border-b border-[#1a2b3c]">
+          <div className="flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-[#00f2ff]" />
+            <h3 className="text-[10px] font-bold font-mono text-slate-200 uppercase tracking-[0.2em]">
+              🧠 RECENT MEMORY ({recentMemories.length}/50 ROLLING)
+            </h3>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">Auto-trimmed buffer</span>
+        </div>
+
+        <div className="flex-1 max-h-[360px] overflow-y-auto space-y-2">
+          {recentMemories.length === 0 ? (
+            <div className="p-4 text-center font-mono text-xs text-slate-500 italic bg-[#05070a] border border-[#1a2b3c]">
+              No recent memories generated yet. Paste a System message in System Input to generate memories.
+            </div>
+          ) : (
+            recentMemories.map((item, idx) => (
+              <div
+                key={item.id || idx}
+                className="p-3 bg-[#05070a] border border-[#1a2b3c] flex items-start justify-between gap-2 font-mono text-xs group"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="text-[#00f2ff] font-bold shrink-0">[{idx + 1}]</span>
+                  <div>
+                    <p className="text-slate-200">{item.summary}</p>
+                    {item.timestamp && (
+                      <span className="text-[10px] text-slate-500 mt-0.5 block">
+                        {new Date(item.timestamp).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => deleteRecentMemory(idx)}
+                  className="text-slate-600 hover:text-rose-400 p-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                  title="Remove from memory"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

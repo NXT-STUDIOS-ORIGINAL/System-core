@@ -51,15 +51,20 @@ jobs:
 
       - name: Create Capacitor configuration
         run: |
-          cat > capacitor.config.json <<'EOF'
+          if [ ! -f "capacitor.config.json" ]; then
+            cat > capacitor.config.json <<'EOF'
           {
             "appId": "com.systemcore.app",
             "appName": "SYSTEM CORE",
-            "webDir": "dist"
+            "webDir": "dist",
+            "server": {
+              "androidScheme": "https"
+            }
           }
           EOF
+          fi
 
-          echo "Capacitor configuration created:"
+          echo "Capacitor configuration:"
           cat capacitor.config.json
 
       - name: Prepare Android project

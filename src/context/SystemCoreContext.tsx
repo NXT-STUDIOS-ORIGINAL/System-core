@@ -730,7 +730,9 @@ export const SystemCoreProvider: React.FC<{ children: ReactNode }> = ({ children
     // Update settings with result status
     const updatedSettings: SystemSettings = {
       ...db.settings,
-      geminiStatus: res.connected ? 'CONNECTED' : (res.category === 'Quota exceeded' ? 'QUOTA_EXCEEDED' : 'ERROR'),
+      geminiStatus: res.connected
+        ? 'CONNECTED'
+        : (res.category === 'Quota error' || res.category === 'Quota exceeded' ? 'QUOTA_EXCEEDED' : 'ERROR'),
       geminiLastTestedAt: new Date().toISOString(),
     };
 
@@ -831,7 +833,7 @@ export const SystemCoreProvider: React.FC<{ children: ReactNode }> = ({ children
       });
 
       // Handle Quota Exceeded
-      if (geminiResponse.isQuotaExceeded || geminiResponse.category === 'Quota exceeded') {
+      if (geminiResponse.isQuotaExceeded || geminiResponse.category === 'Quota error') {
         console.warn('[PIPELINE] Gemini Quota Exceeded. Preserving original input as PENDING without modifying Player State.');
         
         const quotaPendingEvent: SystemEvent = {
@@ -1170,7 +1172,7 @@ export const SystemCoreProvider: React.FC<{ children: ReactNode }> = ({ children
         model: activeM,
       });
 
-      if (response.isQuotaExceeded || response.category === 'Quota exceeded') {
+      if (response.isQuotaExceeded || response.category === 'Quota error') {
         showToast('Quota exceeded: Cannot retry right now.', 'warning');
         return { success: false, error: 'Quota exceeded' };
       }
